@@ -1,50 +1,48 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 
-const initialComplaints = [
-  {
-    id: "COMP001",
-    student: "Arun",
-    equipment: "Computer",
-    lab: "Computer Lab 1",
-    description: "Monitor is not displaying anything",
-    priority: "High",
-    status: "Pending",
-    technician: "",
-    history: ["Complaint registered"],
-  },
-  {
-    id: "COMP002",
-    student: "Priya",
-    equipment: "Projector",
-    lab: "Seminar Hall",
-    description: "Projector connection problem",
-    priority: "Medium",
-    status: "Assigned",
-    technician: "Ravi",
-    history: ["Complaint registered", "Assigned to Ravi"],
-  },
-  {
-    id: "COMP003",
-    student: "Kumar",
-    equipment: "Keyboard",
-    lab: "Computer Lab 2",
-    description: "Keyboard keys are not working",
-    priority: "Low",
-    status: "In Progress",
-    technician: "Ravi",
-    history: ["Complaint registered", "Assigned to Ravi", "Repair started"],
-  },
-];
+// Backend API (API Gateway URL) comes from the Amplify environment variable
+const API = import.meta.env.VITE_API_URL;
 
 const technicians = ["Ravi", "Kumar", "Suresh"];
 
 function App() {
   const [role, setRole] = useState("");
   const [name, setName] = useState("");
-  const [complaints, setComplaints] = useState(initialComplaints);
+  const [complaints, setComplaints] = useState([]);
+  const [loadError, setLoadError] = useState("");
   const [page, setPage] = useState("dashboard");
+
+  // Get all complaints from DynamoDB (GET /items)
+  async function loadComplaints() {
+    try {
+      const res = await fetch(`${API}/items`);
+      if (!res.ok) throw new Error("Server error " + res.status);
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : [];
+      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setComplaints(list);
+      setLoadError("");
+    } catch (err) {
+      setLoadError("Could not load complaints from the server.");
+    }
+  }
+
+  useEffect(() => {
+    loadComplaints();
+  }, []);
+
+  // Save a complaint to DynamoDB (POST /items).
+  // The same id overwrites the old record, so this also works for updates.
+  async function saveComplaint(complaint) {
+    const res = await fetch(`${API}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(complaint),
+    });
+    if (!res.ok) throw new Error("Server error " + res.status);
+  }
 
   const [form, setForm] = useState({
     equipment: "Computer",
@@ -70,7 +68,7 @@ function App() {
     setPage("dashboard");
   }
 
-  function submitComplaint(e) {
+  async function submitComplaint(e) {
     e.preventDefault();
 
     if (!form.lab.trim() || !form.description.trim()) {
@@ -88,7 +86,15 @@ function App() {
       status: "Pending",
       technician: "",
       history: ["Complaint registered"],
+      createdAt: Date.now(),
     };
+
+    try {
+      await saveComplaint(newComplaint);
+    } catch (err) {
+      alert("Could not save the complaint. Please try again.");
+      return;
+    }
 
     setComplaints([newComplaint, ...complaints]);
 
@@ -103,18 +109,26 @@ function App() {
     alert("Complaint submitted successfully!");
   }
 
-  function updateComplaint(id, updates, message) {
-    setComplaints((previous) =>
-      previous.map((complaint) => {
-        if (complaint.id !== id) return complaint;
+  async function updateComplaint(id, updates, message) {
+    const current = complaints.find((c) => c.id === id);
+    if (!current) return;
 
-        return {
-          ...complaint,
-          ...updates,
-          history: [...complaint.history, message],
-        };
-      })
+    const updated = {
+      ...current,
+      ...updates,
+      history: [...current.history, message],
+    };
+
+    setComplaints((previous) =>
+      previous.map((c) => (c.id === id ? updated : c))
     );
+
+    try {
+      await saveComplaint(updated);
+    } catch (err) {
+      alert("Could not save the change. Please try again.");
+      loadComplaints();
+    }
   }
 
   const myComplaints =
@@ -278,6 +292,8 @@ function App() {
           </section>
         ) : (
           <>
+            {loadError && <p className="empty-message">{loadError}</p>}
+
             <section className="stats-grid">
               <div className="stat-card">
                 <span>Total Complaints</span>
